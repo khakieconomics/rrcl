@@ -6,7 +6,6 @@ Authors@R:
            family = "Savage",
            role = c("aut", "cre"),
            email = "jsavage@schmidtfutures.com")
-Fits the Vassavage specification of aggregate random coefficients logit. 
 License: GPL (>=3)
 Depends: 
     methods,
