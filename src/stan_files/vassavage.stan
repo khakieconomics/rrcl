@@ -93,10 +93,10 @@ data {
   int P; // number of product attributes
   int P2; // number of instruments
   matrix[N, P] X; // product attributes
-  matrix[N, P2] W; // instrument matrix
+  matrix[N, P2] W; // instrument matrix--variables that affect production costs but not utility other than through prices.
   int<lower = 0, upper = 1> alpha_negative;
   int NS; // number of sims
-  matrix[NS, P+1] Z;
+  matrix[NS, P+1] Z; // normal(0,1) draws to simulate probability vector
 }
 parameters {
   vector[N] xi; // structural shocks
@@ -106,10 +106,14 @@ parameters {
   vector<lower = 0>[P+1] tau;
   vector[P + P2] gamma;
   real<lower = 0> sigma_mc; // noise in implicit marginal cost
+  real<lower = 0> sigma_xi; // scale of the demand shocks
+  real<lower = 0, upper = 1> rho_raw; // correlation between marginal cost shocks and demand shocks
+}
+transformed parameters {
+  real rho = rho_raw*2-1;
 }
 model {
   // priors
-  xi~ student_t(4, 0, 2);
   beta[2:] ~ student_t(4, 0, .5);
   beta[1] ~ student_t(4, 0, 2);
 
@@ -118,15 +122,18 @@ model {
   tau ~ normal(0, .5);
   gamma[1] ~ student_t(4, 0, 3);
   gamma[2:] ~ student_t(6, 0, 1);
-  sigma_mc ~ student_t(4, 0, 1);
-  // model for price and
-
-
-
-  //
-
+  sigma_mc ~ inv_gamma(2, 1);
+  sigma_xi ~ inv_gamma(5, 1);
+  rho_raw ~ beta(2, 2);
+  
+  // model for sales and price
   {
     matrix[NS, P+1] ranef = tastes(alpha, beta, tau, L_Omega, Z, alpha_negative);
+     // inverse of cholesky factor of covariance matrix, manually done
+     real L21 = (1/sigma_xi) * rho * sigma_mc * sigma_xi;
+     real L22 = sqrt(square(sigma_mc) - square(L21));
+     matrix[2,2] L_inv = 1/(sigma_xi *L22) * [[L22,  -L21],[0.0, sigma_xi]];
+    
     for(t in 1:T) {
       matrix[NS, end_index[t] - start_index[t] + 2] raw_utils = raw_utilities(price[start_index[t]:end_index[t]],
                                                                               X[start_index[t]:end_index[t],:],
@@ -142,14 +149,15 @@ model {
       // sales model
       target += multinomial_lpmf(v | market_shares);
 
-      // price model
+      // eta/xi model
+      // errors = (xi, eta)' ~ multi normal(0, Sigma)
+      // rearranged. errors(Tx2) = nu(Tx2)* L(2x2) for some vec(nu) ~ normal(0, 1)
       {
         vector[end_index[t] - start_index[t] + 1] mc_location = append_col(X[start_index[t]:end_index[t],:], W[start_index[t]:end_index[t],:]) * gamma;
-
-        target += normal_lpdf(price[start_index[t]:end_index[t]] | mc_location - market_shares[2:] ./ derivs , sigma_mc);
+        vector[end_index[t] - start_index[t] + 1] eta = price[start_index[t]:end_index[t]] - (mc_location - market_shares[2:] ./ derivs);
+        matrix[end_index[t] - start_index[t] + 1, 2] nu = append_col(xi[start_index[t]:end_index[t]], eta) * L_inv;
+        target += normal_lpdf(to_vector(nu)|0, 1);
       }
-
-
     }
   }
 }
